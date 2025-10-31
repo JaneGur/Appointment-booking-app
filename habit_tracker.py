@@ -2,11 +2,15 @@ import streamlit as st
 from datetime import datetime, timedelta
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import hashlib
 import re
 import os
+import requests
+import threading
 from supabase import create_client, Client
 from dotenv import load_dotenv
+import time
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -41,6 +45,13 @@ WEEKDAY_MAP = {
     '3': 'Ср', '4': 'Чт', '5': 'Пт', '6': 'Сб'
 }
 
+TELEGRAM_CONFIG = {
+    'bot_token': os.getenv('TELEGRAM_BOT_TOKEN', ''),
+    'admin_chat_id': os.getenv('TELEGRAM_ADMIN_CHAT_ID', ''),
+    'bot_username': os.getenv('TELEGRAM_BOT_USERNAME', 'Jenyhelperbot'),
+    'enabled': True
+}
+
 # ============================================================================
 # ИНИЦИАЛИЗАЦИЯ SUPABASE
 # ============================================================================
@@ -62,11 +73,11 @@ def init_supabase():
         return None
 
 # ============================================================================
-# СТИЛИЗАЦИЯ
+# УЛУЧШЕННАЯ СТИЛИЗАЦИЯ
 # ============================================================================
 
 def load_custom_css():
-    """Загрузка кастомных CSS стилей"""
+    """Загрузка улучшенных CSS стилей"""
     st.markdown("""
         <style>
         .main {
@@ -80,41 +91,73 @@ def load_custom_css():
             height: 3.2em;
             background: linear-gradient(135deg, #88c8bc 0%, #6ba292 100%);
             color: white;
-            font-weight: 500;
+            font-weight: 600;
             border: none;
             box-shadow: 0 4px 15px rgba(136, 200, 188, 0.3);
-            transition: all 0.3s ease;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            font-size: 1rem;
         }
         
         .stButton>button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(136, 200, 188, 0.4);
+            box-shadow: 0 8px 25px rgba(136, 200, 188, 0.5);
+            background: linear-gradient(135deg, #6ba292 0%, #88c8bc 100%);
         }
         
         .booking-card {
-            padding: 1.8rem;
-            border-radius: 16px;
-            background: rgba(255, 255, 255, 0.95);
-            margin-bottom: 1.2rem;
-            border-left: 4px solid #88c8bc;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            padding: 2rem;
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.98);
+            margin-bottom: 1.5rem;
+            border-left: 5px solid #88c8bc;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
         }
         
         .info-box {
             background: white;
-            border-radius: 16px;
-            padding: 1.8rem;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.06);
-            border-left: 4px solid #88c8bc;
+            border-radius: 20px;
+            padding: 2rem;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+            border-left: 5px solid #88c8bc;
+            transition: all 0.3s ease;
         }
         
         .welcome-header {
             background: linear-gradient(135deg, #88c8bc 0%, #a8d5ba 100%);
             color: white;
-            padding: 2rem;
-            border-radius: 16px;
+            padding: 3rem 2rem;
+            border-radius: 20px;
             margin-bottom: 2rem;
             text-align: center;
+            box-shadow: 0 10px 40px rgba(136, 200, 188, 0.3);
+        }
+        
+        .success-message {
+            background: linear-gradient(135deg, #f0f9f7 0%, #e8f5f1 100%);
+            border-left: 5px solid #88c8bc;
+            padding: 2rem;
+            border-radius: 16px;
+            margin: 1.5rem 0;
+            box-shadow: 0 8px 30px rgba(136, 200, 188, 0.2);
+        }
+        
+        .telegram-connected {
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            border-left: 5px solid #0088cc;
+            padding: 1.5rem;
+            border-radius: 12px;
+            margin: 1rem 0;
+        }
+        
+        .telegram-disconnected {
+            background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+            border-left: 5px solid #ff9800;
+            padding: 1.5rem;
+            border-radius: 12px;
+            margin: 1rem 0;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -130,6 +173,33 @@ def hash_password(password: str) -> str:
 def normalize_phone(phone: str) -> str:
     """Нормализация номера телефона"""
     return re.sub(r'\D', '', phone)
+
+def format_phone(phone: str) -> str:
+    """Форматирование телефона для отображения"""
+    clean = normalize_phone(phone)
+    if len(clean) == 11 and clean.startswith('7'):
+        return f"+7 ({clean[1:4]}) {clean[4:7]}-{clean[7:9]}-{clean[9:]}"
+    elif len(clean) == 10:
+        return f"+7 ({clean[0:3]}) {clean[3:6]}-{clean[6:8]}-{clean[8:]}"
+    return phone
+
+def validate_phone(phone: str) -> tuple:
+    """Валидация телефона"""
+    clean = normalize_phone(phone)
+    if len(clean) < 10:
+        return False, "❌ Номер слишком короткий"
+    if len(clean) > 11:
+        return False, "❌ Номер слишком длинный"
+    if not clean.isdigit():
+        return False, "❌ Только цифры"
+    return True, "✅ Корректный номер"
+
+def validate_email(email: str) -> bool:
+    """Валидация email"""
+    if not email:
+        return True
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email))
 
 def format_date(date_str: str, format_str: str = '%d.%m.%Y') -> str:
     """Форматирование даты"""
@@ -148,17 +218,20 @@ def calculate_time_until(date_str: str, time_str: str) -> timedelta:
 
 def format_timedelta(td: timedelta) -> str:
     """Форматирование timedelta в читаемый вид"""
+    if td.total_seconds() < 0:
+        return "Прошло"
+    
     days = td.days
     hours, remainder = divmod(td.seconds, 3600)
     minutes, _ = divmod(remainder, 60)
     
     parts = []
     if days > 0:
-        parts.append(f"{days}д")
+        parts.append(f"{days} дн.")
     if hours > 0:
-        parts.append(f"{hours}ч")
+        parts.append(f"{hours} ч.")
     if minutes > 0 or not parts:
-        parts.append(f"{minutes}м")
+        parts.append(f"{minutes} мин.")
     
     return " ".join(parts)
 
@@ -170,6 +243,641 @@ def get_month_end(year: int, month: int) -> str:
         next_month = datetime(year, month + 1, 1)
     month_end = next_month - timedelta(days=1)
     return month_end.strftime('%Y-%m-%d')
+
+# ============================================================================
+# TELEGRAM БОТ ДЛЯ УВЕДОМЛЕНИЙ
+# ============================================================================
+
+class TelegramBotService:
+    def __init__(self):
+        self.bot_token = TELEGRAM_CONFIG['bot_token']
+        self.admin_chat_id = TELEGRAM_CONFIG['admin_chat_id']
+        self.bot_username = TELEGRAM_CONFIG['bot_username']
+        self.enabled = TELEGRAM_CONFIG['enabled']
+    
+    def _send_message(self, chat_id: str, message: str, parse_mode: str = 'HTML') -> bool:
+        """Базовая отправка сообщения в Telegram"""
+        try:
+            if not self.enabled or not self.bot_token:
+                return False
+            
+            url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+            
+            payload = {
+                'chat_id': chat_id,
+                'text': message,
+                'parse_mode': parse_mode
+            }
+            
+            response = requests.post(url, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                return True
+            else:
+                print(f"❌ Ошибка Telegram ({response.status_code}): {response.text}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Ошибка отправки в Telegram: {e}")
+            return False
+    
+    def send_to_admin(self, message: str) -> bool:
+        """Отправка сообщения администратору"""
+        return self._send_message(self.admin_chat_id, message)
+    
+    def send_to_client(self, client_chat_id: str, message: str) -> bool:
+        """Отправка сообщения клиенту"""
+        return self._send_message(client_chat_id, message)
+    
+    def check_client_connection(self, chat_id: str) -> bool:
+        """Проверка подключения клиента к боту"""
+        try:
+            test_message = "🔍 Проверка подключения..."
+            return self._send_message(chat_id, test_message)
+        except:
+            return False
+    
+    def get_bot_link(self, client_phone: str = None) -> str:
+        """Получение ссылки на бота с параметрами"""
+        base_url = f"https://t.me/{self.bot_username}"
+        if client_phone:
+            return f"{base_url}?start=connect_{hash_password(client_phone)[:10]}"
+        return base_url
+    
+    # ============================================================================
+    # УВЕДОМЛЕНИЯ О ЗАПИСИ
+    # ============================================================================
+    
+    def notify_booking_created_admin(self, booking_data: dict) -> bool:
+        """Уведомление админу о новой записи"""
+        name = booking_data.get('client_name', 'Клиент')
+        phone = booking_data.get('client_phone', 'Не указан')
+        date = format_date(booking_data.get('booking_date', ''))
+        time = booking_data.get('booking_time', '')
+        
+        message = f"""
+📅 <b>НОВАЯ ЗАПИСЬ НА КОНСУЛЬТАЦИЮ</b>
+
+👤 <b>Клиент:</b> {name}
+📱 <b>Телефон:</b> <code>{phone}</code>
+📅 <b>Дата:</b> {date}
+🕐 <b>Время:</b> {time}
+
+⏰ <i>Напоминание будет отправлено за 1 час до консультации</i>
+        """
+        
+        return self.send_to_admin(message)
+    
+    def notify_booking_created_client(self, client_chat_id: str, booking_data: dict) -> bool:
+        """Уведомление клиенту о подтверждении записи"""
+        name = booking_data.get('client_name', '')
+        date = format_date(booking_data.get('booking_date', ''))
+        time = booking_data.get('booking_time', '')
+        
+        message = f"""
+✅ <b>ВАША ЗАПИСЬ ПОДТВЕРЖДЕНА</b>
+
+Добрый день, {name}!
+
+📅 <b>Дата:</b> {date}
+🕐 <b>Время:</b> {time}
+
+Мы ждем вас на консультацию!
+
+⏰ <i>Мы напомним вам за 1 час до начала</i>
+
+Если у вас возникли вопросы, ответьте на это сообщение.
+        """
+        
+        return self.send_to_client(client_chat_id, message)
+    
+    def notify_booking_cancelled_admin(self, booking_data: dict) -> bool:
+        """Уведомление админу об отмене записи"""
+        name = booking_data.get('client_name', 'Клиент')
+        phone = booking_data.get('client_phone', 'Не указан')
+        date = format_date(booking_data.get('booking_date', ''))
+        
+        message = f"""
+❌ <b>ОТМЕНА ЗАПИСИ</b>
+
+👤 <b>Клиент:</b> {name}
+📱 <b>Телефон:</b> <code>{phone}</code>
+📅 <b>Дата:</b> {date}
+
+🚫 <i>Запись отменена клиентом</i>
+        """
+        
+        return self.send_to_admin(message)
+    
+    def notify_booking_cancelled_client(self, client_chat_id: str, booking_data: dict) -> bool:
+        """Уведомление клиенту об отмене записи"""
+        name = booking_data.get('client_name', '')
+        date = format_date(booking_data.get('booking_date', ''))
+        
+        message = f"""
+❌ <b>ЗАПИСЬ ОТМЕНЕНА</b>
+
+Уважаемый(ая) {name},
+
+Ваша запись на {date} отменена.
+
+Если вы хотите записаться на другое время, ответьте на это сообщение.
+
+С уважением,
+Ваш психолог
+        """
+        
+        return self.send_to_client(client_chat_id, message)
+    
+    def notify_reminder_admin(self, booking_data: dict) -> bool:
+        """Напоминание админу за 1 час"""
+        name = booking_data.get('client_name', 'Клиент')
+        phone = booking_data.get('client_phone', 'Не указан')
+        time = booking_data.get('booking_time', '')
+        
+        message = f"""
+⏰ <b>НАПОМИНАНИЕ О КОНСУЛЬТАЦИИ</b>
+
+Через 1 час у вас консультация:
+
+👤 <b>Клиент:</b> {name}
+📱 <b>Телефон:</b> <code>{phone}</code>
+🕐 <b>Время:</b> {time}
+
+Подготовьтесь к встрече!
+        """
+        
+        return self.send_to_admin(message)
+    
+    def notify_reminder_client(self, client_chat_id: str, booking_data: dict) -> bool:
+        """Напоминание клиенту за 1 час"""
+        name = booking_data.get('client_name', '')
+        time = booking_data.get('booking_time', '')
+        
+        message = f"""
+⏰ <b>НАПОМИНАНИЕ О КОНСУЛЬТАЦИИ</b>
+
+Добрый день, {name}!
+
+Через 1 час у вас консультация в {time}.
+
+Пожалуйста, подготовьтесь к встрече.
+
+Ждем вас!
+        """
+        
+        return self.send_to_client(client_chat_id, message)
+    
+    def send_welcome_notification(self, client_chat_id: str, client_name: str, upcoming_bookings: list):
+        """Приветственное уведомление после подключения"""
+        message = f"""
+👋 <b>ДОБРО ПОЖАЛОВАТЬ, {client_name}!</b>
+
+✅ <b>Вы успешно подключили уведомления!</b>
+
+Теперь вы будете получать:
+• ✅ Подтверждения новых записей
+• ⏰ Напоминания за 1 час до консультаций
+• ❌ Уведомления об отменах
+        """
+        
+        # Добавляем информацию о предстоящих записях
+        if upcoming_bookings:
+            message += "\n\n📅 <b>Ваши предстоящие консультации:</b>\n"
+            for booking in upcoming_bookings:
+                date = format_date(booking.get('booking_date', ''))
+                time = booking.get('booking_time', '')
+                message += f"• {date} в {time}\n"
+        
+        message += "\nС уважением,\nВаш психолог 🌿"
+        
+        return self.send_to_client(client_chat_id, message)
+    
+    def send_upcoming_bookings_notification(self, client_chat_id: str, client_name: str, bookings: list):
+        """Уведомление о предстоящих записях"""
+        if not bookings:
+            return False
+        
+        message = f"""
+📅 <b>ВАШИ ПРЕДСТОЯЩИЕ КОНСУЛЬТАЦИИ</b>
+
+Уважаемый(ая) {client_name},
+
+У вас запланированы консультации:
+        """
+        
+        for booking in bookings:
+            date = format_date(booking.get('booking_date', ''))
+            time = booking.get('booking_time', '')
+            message += f"\n• {date} в {time}"
+        
+        message += "\n\n⏰ Мы напомним вам за 1 час до каждой консультации!"
+        
+        return self.send_to_client(client_chat_id, message)
+    
+    def schedule_reminder(self, booking_data: dict, client_chat_id: str):
+        """Планирование напоминания за 1 час до консультации"""
+        try:
+            booking_date = booking_data.get('booking_date')
+            booking_time = booking_data.get('booking_time')
+            
+            if not booking_date or not booking_time:
+                return
+            
+            # Создаем datetime объекта консультации
+            consultation_datetime = datetime.strptime(
+                f"{booking_date} {booking_time}", 
+                "%Y-%m-%d %H:%M"
+            )
+            
+            # Вычисляем время напоминания (за 1 час)
+            reminder_time = consultation_datetime - timedelta(hours=1)
+            
+            # Вычисляем задержку в секундах
+            now = datetime.now()
+            delay_seconds = (reminder_time - now).total_seconds()
+            
+            # Если напоминание должно быть в будущем
+            if delay_seconds > 0:
+                # Запускаем в отдельном потоке
+                timer = threading.Timer(
+                    delay_seconds, 
+                    self._send_reminder, 
+                    [booking_data, client_chat_id]
+                )
+                timer.daemon = True
+                timer.start()
+                
+                print(f"⏰ Напоминание запланировано на {reminder_time}")
+            else:
+                print("⚠️ Время консультации уже прошло, напоминание не планируется")
+                
+        except Exception as e:
+            print(f"❌ Ошибка планирования напоминания: {e}")
+    
+    def _send_reminder(self, booking_data: dict, client_chat_id: str):
+        """Отправка запланированного напоминания"""
+        try:
+            print("🔔 Отправка запланированного напоминания...")
+            
+            # Отправляем админу
+            self.notify_reminder_admin(booking_data)
+            
+            # Отправляем клиенту
+            self.notify_reminder_client(client_chat_id, booking_data)
+            
+            print("✅ Напоминания отправлены!")
+                
+        except Exception as e:
+            print(f"❌ Ошибка отправки напоминания: {e}")
+
+# Создаем экземпляр бота
+telegram_bot = TelegramBotService()
+
+# ============================================================================
+# ФУНКЦИИ ДЛЯ РАБОТЫ С TELEGRAM В БАЗЕ
+# ============================================================================
+
+def save_telegram_chat_id(phone: str, chat_id: str):
+    """Сохранение Telegram chat_id клиента"""
+    try:
+        phone_hash = hash_password(normalize_phone(phone))
+        
+        # Обновляем все записи клиента
+        response = supabase.table('bookings')\
+            .update({'telegram_chat_id': chat_id})\
+            .eq('phone_hash', phone_hash)\
+            .execute()
+        
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка сохранения chat_id: {e}")
+        return False
+
+def get_client_telegram_chat_id(phone: str):
+    """Получение Telegram chat_id клиента"""
+    try:
+        phone_hash = hash_password(normalize_phone(phone))
+        
+        response = supabase.table('bookings')\
+            .select('telegram_chat_id')\
+            .eq('phone_hash', phone_hash)\
+            .not_.is_('telegram_chat_id', None)\
+            .limit(1)\
+            .execute()
+        
+        if response.data and response.data[0]['telegram_chat_id']:
+            return response.data[0]['telegram_chat_id']
+        return None
+    except Exception as e:
+        print(f"❌ Ошибка получения chat_id: {e}")
+        return None
+
+def get_upcoming_bookings_with_telegram(phone: str):
+    """Получение предстоящих записей клиента"""
+    try:
+        phone_hash = hash_password(normalize_phone(phone))
+        
+        response = supabase.table('bookings')\
+            .select('*')\
+            .eq('phone_hash', phone_hash)\
+            .eq('status', 'confirmed')\
+            .gte('booking_date', datetime.now().date().isoformat())\
+            .order('booking_date')\
+            .order('booking_time')\
+            .execute()
+        
+        return response.data if response.data else []
+    except Exception as e:
+        print(f"❌ Ошибка получения записей: {e}")
+        return []
+
+def send_telegram_connection_test(chat_id: str, client_name: str):
+    """Отправка тестового уведомления после подключения"""
+    try:
+        message = f"""
+🔔 <b>ТЕСТОВОЕ УВЕДОМЛЕНИЕ</b>
+
+Привет, {client_name}!
+
+Это тестовое сообщение подтверждает, что вы успешно подключили уведомления в Telegram.
+
+Теперь вы будете получать:
+✅ Подтверждения записей
+⏰ Напоминания за 1 час
+❌ Уведомления об отменах
+
+Отлично! Уведомления работают! 🎉
+        """
+        
+        return telegram_bot.send_to_client(chat_id, message)
+    except Exception as e:
+        print(f"❌ Ошибка отправки тестового уведомления: {e}")
+        return False
+
+# ============================================================================
+# МЕНЕДЖЕР УВЕДОМЛЕНИЙ
+# ============================================================================
+
+class NotificationManager:
+    def __init__(self):
+        self.bot = telegram_bot
+    
+    def notify_booking_created(self, booking_data: dict, client_chat_id: str = None):
+        """Полный цикл уведомлений о новой записи"""
+        results = {}
+        
+        # Уведомление администратору
+        results['admin_notified'] = self.bot.notify_booking_created_admin(booking_data)
+        
+        # Уведомление клиенту (если указан chat_id)
+        if client_chat_id:
+            results['client_notified'] = self.bot.notify_booking_created_client(client_chat_id, booking_data)
+            
+            # Планируем напоминание за 1 час
+            self.bot.schedule_reminder(booking_data, client_chat_id)
+            results['reminder_scheduled'] = True
+        
+        return results
+    
+    def notify_booking_cancelled(self, booking_data: dict, client_chat_id: str = None):
+        """Уведомления об отмене записи"""
+        results = {}
+        
+        # Уведомление администратору
+        results['admin_notified'] = self.bot.notify_booking_cancelled_admin(booking_data)
+        
+        # Уведомление клиенту (если указан chat_id)
+        if client_chat_id:
+            results['client_notified'] = self.bot.notify_booking_cancelled_client(client_chat_id, booking_data)
+        
+        return results
+    
+    def connect_client_telegram(self, phone: str, chat_id: str, client_name: str):
+        """Подключение клиента к Telegram уведомлениям"""
+        try:
+            # Сохраняем chat_id в базе
+            save_success = save_telegram_chat_id(phone, chat_id)
+            
+            if not save_success:
+                return False
+            
+            # Получаем предстоящие записи
+            upcoming_bookings = get_upcoming_bookings_with_telegram(phone)
+            
+            # Отправляем приветственное уведомление
+            welcome_success = self.bot.send_welcome_notification(chat_id, client_name, upcoming_bookings)
+            
+            # Отправляем тестовое уведомление
+            test_success = send_telegram_connection_test(chat_id, client_name)
+            
+            # Планируем напоминания для предстоящих записей
+            for booking in upcoming_bookings:
+                self.bot.schedule_reminder(booking, chat_id)
+            
+            return welcome_success or test_success
+            
+        except Exception as e:
+            print(f"❌ Ошибка подключения Telegram: {e}")
+            return False
+    
+    def send_upcoming_bookings(self, phone: str):
+        """Отправка уведомления о предстоящих записях"""
+        try:
+            chat_id = get_client_telegram_chat_id(phone)
+            if not chat_id:
+                return False
+            
+            upcoming_bookings = get_upcoming_bookings_with_telegram(phone)
+            if not upcoming_bookings:
+                return False
+            
+            client_name = st.session_state.client_name
+            
+            return self.bot.send_upcoming_bookings_notification(chat_id, client_name, upcoming_bookings)
+            
+        except Exception as e:
+            print(f"❌ Ошибка отправки предстоящих записей: {e}")
+            return False
+
+# Создаем менеджер уведомлений
+notifier = NotificationManager()
+
+# ============================================================================
+# РАЗДЕЛ TELEGRAM В ЛИЧНОМ КАБИНЕТЕ
+# ============================================================================
+
+def render_telegram_section():
+    """Отображение секции подключения Telegram"""
+    st.markdown("### 💬 Уведомления в Telegram")
+    
+    # Получаем текущий chat_id клиента
+    current_chat_id = get_client_telegram_chat_id(st.session_state.client_phone)
+    
+    if current_chat_id:
+        # Telegram уже подключен
+        st.markdown("""
+        <div class="telegram-connected">
+            <h4>✅ Telegram подключен!</h4>
+            <p>Вы получаете уведомления о всех событиях</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            st.info("""
+            **Вы получаете:**
+            • ✅ Подтверждения новых записей
+            • ⏰ Напоминания за 1 час до консультаций  
+            • ❌ Уведомления об отменах
+            """)
+        
+        with col2:
+            if st.button("🔄 Отправить тест", use_container_width=True):
+                if send_telegram_connection_test(current_chat_id, st.session_state.client_name):
+                    st.success("✅ Тестовое уведомление отправлено!")
+                else:
+                    st.error("❌ Ошибка отправки")
+        
+        with col3:
+            if st.button("📋 Мои записи", use_container_width=True):
+                if notifier.send_upcoming_bookings(st.session_state.client_phone):
+                    st.success("✅ Список записей отправлен!")
+                else:
+                    st.error("❌ Нет предстоящих записей")
+        
+        # Информация о предстоящих записях
+        upcoming_bookings = get_upcoming_bookings_with_telegram(st.session_state.client_phone)
+        if upcoming_bookings:
+            st.markdown("#### 📅 Ваши предстоящие консультации:")
+            for booking in upcoming_bookings:
+                date = format_date(booking['booking_date'])
+                time = booking['booking_time']
+                st.write(f"• {date} в {time}")
+        
+    else:
+        # Telegram не подключен
+        st.markdown("""
+        <div class="telegram-disconnected">
+            <h4>⚠️ Telegram не подключен</h4>
+            <p>Вы не получаете уведомления о записях и напоминания</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("""
+        ### 📱 Подключите Telegram за 2 минуты!
+        
+        **После подключения вы будете получать:**
+        • ✅ Мгновенные подтверждения записей
+        • ⏰ Автоматические напоминания за 1 час
+        • ❌ Уведомления об отменах записей
+        
+        **Как подключить:**
+        1. Нажмите кнопку "Подключить Telegram" ниже
+        2. Откроется Telegram с нашим ботом
+        3. Нажмите кнопку START / ЗАПУСТИТЬ
+        4. Вернитесь сюда и введите ваш Chat ID
+        """)
+        
+        # Ссылка на бота
+        bot_link = telegram_bot.get_bot_link(st.session_state.client_phone)
+        
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.markdown(f"""
+            <a href="{bot_link}" target="_blank">
+                <button style="
+                    background: #0088cc; 
+                    color: white; 
+                    padding: 15px; 
+                    border: none; 
+                    border-radius: 10px; 
+                    font-size: 16px; 
+                    cursor: pointer;
+                    width: 100%;
+                ">
+                    📱 Подключить Telegram
+                </button>
+            </a>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("""
+            **После подключения:**
+            1. Скопируйте ваш **Chat ID** из Telegram
+            2. Вставьте в поле ниже
+            3. Нажмите "Сохранить"
+            
+            *Как найти Chat ID?*
+            - Напишите боту [@userinfobot](https://t.me/userinfobot) и он покажет ваш Chat ID
+            """)
+            
+            with st.form("connect_telegram_form"):
+                chat_id = st.text_input(
+                    "Ваш Chat ID из Telegram:",
+                    placeholder="123456789",
+                    help="Цифровой ID, который вам выдаст бот"
+                )
+                
+                submitted = st.form_submit_button("💾 Сохранить и подключить", use_container_width=True)
+                
+                if submitted:
+                    if not chat_id:
+                        st.error("❌ Введите Chat ID")
+                    elif not chat_id.isdigit():
+                        st.error("❌ Chat ID должен содержать только цифры")
+                    else:
+                        # Проверяем подключение
+                        if telegram_bot.check_client_connection(chat_id):
+                            # Сохраняем и подключаем
+                            success = notifier.connect_client_telegram(
+                                st.session_state.client_phone,
+                                chat_id,
+                                st.session_state.client_name
+                            )
+                            
+                            if success:
+                                st.success("🎉 Telegram успешно подключен! Вы будете получать уведомления.")
+                                st.balloons()
+                                st.rerun()
+                            else:
+                                st.error("❌ Ошибка при сохранении настроек")
+                        else:
+                            st.error("""
+                            ❌ Не удалось подключиться!
+                            
+                            **Возможные причины:**
+                            • Вы не нажали START в боте
+                            • Неверный Chat ID
+                            • Бот заблокирован
+                            
+                            **Что делать:**
+                            1. Нажмите "Подключить Telegram"
+                            2. В открывшемся боте нажмите START
+                            3. Получите Chat ID командой `/id`
+                            4. Введите его снова
+                            """)
+        
+        # Альтернативный способ получения Chat ID
+        with st.expander("🔍 Как получить Chat ID?"):
+            st.markdown("""
+            **Способ 1: Через нашего бота**
+            1. Нажмите "Подключить Telegram" выше
+            2. В открывшемся боте напишите `/id`
+            3. Бот пришлет ваш Chat ID
+            
+            **Способ 2: Через @userinfobot**
+            1. Найдите в Telegram `@userinfobot`
+            2. Начните с ним диалог
+            3. Он покажет ваш Chat ID
+            
+            **Способ 3: Вручную**
+            - Откройте наш бот
+            - Нажмите START
+            - Скопируйте цифры из ссылки или напишите `/id`
+            """)
 
 # ============================================================================
 # ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ
@@ -196,7 +904,10 @@ def init_session_state():
         'selected_client': None,
         'selected_client_name': None,
         'show_new_booking_form': False,
-        'show_stats': False
+        'show_stats': False,
+        'confirm_delete': {},
+        'search_query': '',
+        'auto_refresh': False
     }
     
     for key, value in defaults.items():
@@ -209,43 +920,159 @@ init_session_state()
 # БИЗНЕС-ЛОГИКА: НАСТРОЙКИ
 # ============================================================================
 
+@st.cache_data(ttl=300)
 def get_settings():
     """Получение настроек системы"""
     try:
         response = supabase.table('settings').select('*').eq('id', 1).execute()
         if response.data:
-            return response.data[0]
+            settings = response.data[0]
+            
+            # Добавляем поля информационной панели, если их нет в БД
+            default_info_settings = {
+                'info_title': 'ℹ️ Информация',
+                'info_work_hours': '🕐 Рабочее время:\n09:00 - 18:00',
+                'info_session_duration': '⏱️ Длительность консультации:\n60 минут',
+                'info_format': '💻 Формат:\nОнлайн или в кабинете',
+                'info_contacts': '📞 Контакты:\n📱 +7 (999) 123-45-67\n📧 hello@psychologist.ru\n🌿 psychologist.ru',
+                'info_additional': ''
+            }
+            
+            for key, value in default_info_settings.items():
+                if key not in settings:
+                    settings[key] = value
+            
+            return settings
         else:
             # Создаем настройки по умолчанию
             default_settings = {
                 'work_start': '09:00',
                 'work_end': '18:00', 
                 'session_duration': 60,
-                'break_duration': 15
+                'break_duration': 15,
+                'info_title': 'ℹ️ Информация',
+                'info_work_hours': '🕐 Рабочее время:\n09:00 - 18:00',
+                'info_session_duration': '⏱️ Длительность консультации:\n60 минут',
+                'info_format': '💻 Формат:\nОнлайн или в кабинете',
+                'info_contacts': '📞 Контакты:\n📱 +7 (999) 123-45-67\n📧 hello@psychologist.ru\n🌿 psychologist.ru',
+                'info_additional': ''
             }
-            supabase.table('settings').insert({**default_settings, 'id': 1}).execute()
-            return default_settings
+            
+            try:
+                supabase.table('settings').insert({**default_settings, 'id': 1}).execute()
+                return default_settings
+            except Exception as insert_error:
+                # Если не удалось вставить все поля, пробуем только основные
+                basic_settings = {
+                    'work_start': '09:00',
+                    'work_end': '18:00', 
+                    'session_duration': 60,
+                    'break_duration': 15
+                }
+                supabase.table('settings').insert({**basic_settings, 'id': 1}).execute()
+                return {**basic_settings, **default_info_settings}
+                
     except Exception as e:
         st.error(f"❌ Ошибка получения настроек: {e}")
-        return None
+        # Возвращаем настройки по умолчанию
+        return {
+            'work_start': '09:00',
+            'work_end': '18:00', 
+            'session_duration': 60,
+            'break_duration': 15,
+            'info_title': 'ℹ️ Информация',
+            'info_work_hours': '🕐 Рабочее время:\n09:00 - 18:00',
+            'info_session_duration': '⏱️ Длительность консультации:\n60 минут',
+            'info_format': '💻 Формат:\nОнлайн или в кабинете',
+            'info_contacts': '📞 Контакты:\n📱 +7 (999) 123-45-67\n📧 hello@psychologist.ru\n🌿 psychologist.ru',
+            'info_additional': ''
+        }
 
 def update_settings(work_start: str, work_end: str, session_duration: int):
     """Обновление настроек системы"""
     try:
-        supabase.table('settings').update({
+        update_data = {
             'work_start': work_start,
             'work_end': work_end,
             'session_duration': session_duration
-        }).eq('id', 1).execute()
-        return True
+        }
+        
+        # Проверяем существование полей перед обновлением
+        current_settings = get_settings()
+        filtered_data = {k: v for k, v in update_data.items() if k in current_settings}
+        
+        if filtered_data:
+            supabase.table('settings').update(filtered_data).eq('id', 1).execute()
+            st.cache_data.clear()
+            return True
+        else:
+            return False
     except Exception as e:
         st.error(f"❌ Ошибка обновления настроек: {e}")
         return False
+
+def update_info_settings(info_data: dict):
+    """Обновление настроек информационной панели"""
+    try:
+        # Сначала получаем текущие настройки
+        current_settings = get_settings()
+        
+        # Обновляем только существующие поля
+        update_data = {}
+        for key, value in info_data.items():
+            if key in current_settings:
+                update_data[key] = value
+        
+        if update_data:
+            supabase.table('settings').update(update_data).eq('id', 1).execute()
+            st.cache_data.clear()
+            return True
+        else:
+            st.error("❌ Нет полей для обновления")
+            return False
+            
+    except Exception as e:
+        st.error(f"❌ Ошибка обновления настроек информации: {e}")
+        return False
+
+def render_info_panel():
+    """Отображение информационной панели с настраиваемым содержимым"""
+    settings = get_settings()
+    if not settings:
+        return
+    
+    # Безопасное получение значений с fallback
+    title = settings.get('info_title', 'ℹ️ Информация')
+    work_hours = settings.get('info_work_hours', '🕐 Рабочее время:\n09:00 - 18:00')
+    session_duration = settings.get('info_session_duration', '⏱️ Длительность консультации:\n60 минут')
+    format_info = settings.get('info_format', '💻 Формат:\nОнлайн или в кабинете')
+    contacts = settings.get('info_contacts', '📞 Контакты:\n📱 +7 (999) 123-45-67\n📧 hello@psychologist.ru\n🌿 psychologist.ru')
+    additional = settings.get('info_additional', '')
+    
+    # Формируем HTML содержимое
+    info_html = f"""
+    <div class="info-box">
+        <h4>{title}</h4>
+        <p><strong>{work_hours.replace(chr(10), '<br>')}</strong></p>
+        <p><strong>{session_duration.replace(chr(10), '<br>')}</strong></p>
+        <p><strong>{format_info.replace(chr(10), '<br>')}</strong></p>
+        <hr>
+        <h4>📞 Контакты</h4>
+        <p>{contacts.replace(chr(10), '<br>')}</p>
+    """
+    
+    if additional and additional.strip():
+        info_html += f'<p>{additional.replace(chr(10), "<br>")}</p>'
+    
+    info_html += "</div>"
+    
+    st.markdown(info_html, unsafe_allow_html=True)
 
 # ============================================================================
 # БИЗНЕС-ЛОГИКА: КЛИЕНТЫ
 # ============================================================================
 
+@st.cache_data(ttl=60)
 def get_client_info(phone: str):
     """Получение информации о клиенте"""
     try:
@@ -284,6 +1111,7 @@ def has_active_booking(phone: str) -> bool:
         st.error(f"❌ Ошибка проверки активных записей: {e}")
         return False
 
+@st.cache_data(ttl=60)
 def get_client_bookings(phone: str):
     """Получение всех записей клиента"""
     try:
@@ -319,31 +1147,51 @@ def get_upcoming_client_booking(phone: str):
         st.error(f"❌ Ошибка получения ближайшей записи: {e}")
         return None
 
+@st.cache_data(ttl=120)
 def get_all_clients():
     """Получение списка всех уникальных клиентов"""
     try:
-        # Временное решение - получаем всех клиентов из bookings
         response = supabase.table('bookings')\
             .select('client_name, client_phone, client_email, client_telegram, phone_hash')\
             .execute()
         
         if response.data:
             df = pd.DataFrame(response.data)
-            # Группируем по клиентам
+            clients_df = df.groupby('phone_hash').first().reset_index()
+            
             clients_data = []
-            for phone_hash, group in df.groupby('phone_hash'):
+            for phone_hash in clients_df['phone_hash'].unique():
+                client_row = clients_df[clients_df['phone_hash'] == phone_hash].iloc[0]
+                
+                bookings_response = supabase.table('bookings')\
+                    .select('id, status, booking_date')\
+                    .eq('phone_hash', phone_hash)\
+                    .execute()
+                
+                if bookings_response.data:
+                    bookings_df = pd.DataFrame(bookings_response.data)
+                    total = len(bookings_df)
+                    upcoming = len(bookings_df[bookings_df['status'] == 'confirmed']) if 'status' in bookings_df.columns else 0
+                    completed = len(bookings_df[bookings_df['status'] == 'completed']) if 'status' in bookings_df.columns else 0
+                    cancelled = len(bookings_df[bookings_df['status'] == 'cancelled']) if 'status' in bookings_df.columns else 0
+                    first_booking = bookings_df['booking_date'].min() if 'booking_date' in bookings_df.columns else ''
+                    last_booking = bookings_df['booking_date'].max() if 'booking_date' in bookings_df.columns else ''
+                else:
+                    total = upcoming = completed = cancelled = 0
+                    first_booking = last_booking = ''
+                
                 client_data = {
                     'phone_hash': phone_hash,
-                    'client_name': group.iloc[0]['client_name'],
-                    'client_phone': group.iloc[0]['client_phone'],
-                    'client_email': group.iloc[0]['client_email'],
-                    'client_telegram': group.iloc[0]['client_telegram'],
-                    'total_bookings': len(group),
-                    'upcoming_bookings': len(group[group['status'] == 'confirmed']),
-                    'completed_bookings': len(group[group['status'] == 'completed']),
-                    'cancelled_bookings': len(group[group['status'] == 'cancelled']),
-                    'first_booking': group['booking_date'].min(),
-                    'last_booking': group['booking_date'].max()
+                    'client_name': client_row['client_name'],
+                    'client_phone': format_phone(client_row['client_phone']),
+                    'client_email': client_row['client_email'],
+                    'client_telegram': client_row['client_telegram'],
+                    'total_bookings': total,
+                    'upcoming_bookings': upcoming,
+                    'completed_bookings': completed,
+                    'cancelled_bookings': cancelled,
+                    'first_booking': first_booking,
+                    'last_booking': last_booking
                 }
                 clients_data.append(client_data)
             
@@ -354,6 +1202,7 @@ def get_all_clients():
         st.error(f"❌ Ошибка получения списка клиентов: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=60)
 def get_client_booking_history(phone_hash: str):
     """Получение истории записей конкретного клиента"""
     try:
@@ -452,8 +1301,9 @@ def get_available_slots(date: str) -> list:
         return []
 
 def create_booking(client_name: str, client_phone: str, client_email: str, 
-                  client_telegram: str, date: str, time_slot: str, notes: str = "") -> tuple:
-    """Создание записи"""
+                  client_telegram: str, date: str, time_slot: str, notes: str = "",
+                  client_chat_id: str = None) -> tuple:
+    """Создание записи с уведомлениями"""
     try:
         # Проверка активной записи
         if has_active_booking(client_phone):
@@ -475,10 +1325,24 @@ def create_booking(client_name: str, client_phone: str, client_email: str,
             'booking_time': time_slot,
             'notes': notes,
             'phone_hash': phone_hash,
-            'status': 'confirmed'
+            'status': 'confirmed',
+            'telegram_chat_id': client_chat_id  # 🔥 СОХРАНЯЕМ CHAT_ID
         }).execute()
         
         if response.data:
+            booking_data = response.data[0]
+            
+            # 🔥 ОТПРАВЛЯЕМ УВЕДОМЛЕНИЯ О НОВОЙ ЗАПИСИ
+            notification_results = notifier.notify_booking_created(booking_data, client_chat_id)
+            
+            # Показываем статус уведомлений
+            if notification_results.get('admin_notified'):
+                st.success("✅ Администратор уведомлен")
+            if notification_results.get('client_notified') and client_chat_id:
+                st.success("✅ Уведомление отправлено в Telegram")
+            if notification_results.get('reminder_scheduled') and client_chat_id:
+                st.success("✅ Напоминание запланировано за 1 час")
+            
             return True, "✅ Запись успешно создана"
         else:
             return False, "❌ Ошибка при создании записи"
@@ -507,6 +1371,11 @@ def create_booking_by_admin(client_name: str, client_phone: str, client_email: s
         }).execute()
         
         if response.data:
+            booking_data = response.data[0]
+            
+            # 🔥 ОТПРАВЛЯЕМ УВЕДОМЛЕНИЯ АДМИНУ
+            notifier.notify_booking_created(booking_data)
+            
             return True, "✅ Запись успешно создана"
         else:
             return False, "❌ Ошибка при создании записи"
@@ -516,14 +1385,14 @@ def create_booking_by_admin(client_name: str, client_phone: str, client_email: s
             return False, "❌ Это время уже занято"
         return False, f"❌ Ошибка: {str(e)}"
 
-def cancel_booking(booking_id: int, phone: str) -> tuple:
-    """Отмена записи"""
+def cancel_booking(booking_id: int, phone: str, client_chat_id: str = None) -> tuple:
+    """Отмена записи с уведомлениями"""
     try:
         phone_hash = hash_password(normalize_phone(phone))
         
         # Получаем информацию о записи
         response = supabase.table('bookings')\
-            .select('booking_date, booking_time')\
+            .select('*')\
             .eq('id', booking_id)\
             .eq('phone_hash', phone_hash)\
             .execute()
@@ -545,6 +1414,16 @@ def cancel_booking(booking_id: int, phone: str) -> tuple:
             .update({'status': 'cancelled'})\
             .eq('id', booking_id)\
             .execute()
+        
+        # 🔥 ОТПРАВЛЯЕМ УВЕДОМЛЕНИЯ ОБ ОТМЕНЕ
+        updated_booking = {**booking, 'status': 'cancelled'}
+        notification_results = notifier.notify_booking_cancelled(updated_booking, client_chat_id)
+        
+        # Показываем статус уведомлений
+        if notification_results.get('admin_notified'):
+            st.success("✅ Администратор уведомлен об отмене")
+        if notification_results.get('client_notified') and client_chat_id:
+            st.success("✅ Клиент уведомлен об отмене")
         
         return True, "Запись успешно отменена"
         
@@ -610,7 +1489,28 @@ def update_booking_notes(booking_id: int, new_notes: str):
 def update_booking_status(booking_id: int, new_status: str):
     """Обновление статуса записи"""
     try:
+        # Получаем текущие данные
+        response = supabase.table('bookings')\
+            .select('*')\
+            .eq('id', booking_id)\
+            .execute()
+        
+        if not response.data:
+            return False, "Запись не найдена"
+        
+        old_booking = response.data[0]
+        
+        # Обновляем статус
         supabase.table('bookings').update({'status': new_status}).eq('id', booking_id).execute()
+        
+        # 🔥 ОТПРАВЛЯЕМ УВЕДОМЛЕНИЯ
+        updated_booking = {**old_booking, 'status': new_status}
+        
+        if new_status == 'completed':
+            notifier.notify_booking_cancelled(updated_booking)
+        elif new_status == 'cancelled':
+            notifier.notify_booking_cancelled(updated_booking)
+        
         return True, f"✅ Статус изменен на {STATUS_DISPLAY[new_status]['text']}"
     except Exception as e:
         return False, f"❌ Ошибка: {str(e)}"
@@ -698,12 +1598,12 @@ def get_blocked_slots():
         return pd.DataFrame()
 
 # ============================================================================
-# СТАТИСТИКА И АНАЛИТИКА (ИСПРАВЛЕННАЯ)
+# СТАТИСТИКА И АНАЛИТИКА
 # ============================================================================
 
 @st.cache_data(ttl=60)
 def get_stats():
-    """Получение основной статистики - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+    """Получение основной статистики"""
     try:
         # Общее количество записей
         total_response = supabase.table('bookings').select('id', count='exact').execute()
@@ -717,7 +1617,7 @@ def get_stats():
             .execute()
         upcoming = upcoming_response.count or 0
         
-        # Записи за текущий месяц - ИСПРАВЛЕННЫЙ КОД
+        # Записи за текущий месяц
         current_date = datetime.now()
         month_start = current_date.replace(day=1).date().isoformat()
         month_end = get_month_end(current_date.year, current_date.month)
@@ -832,7 +1732,7 @@ def render_time_slots(available_slots, key_prefix="slot"):
         return None
     
     st.markdown("#### 🕐 Выберите время")
-    st.info("💡 Доступные для записи временные слоты")
+    st.info("💡 Доступные для записи временные слотов")
     
     cols = st.columns(4)
     for idx, time_slot in enumerate(available_slots):
@@ -852,22 +1752,35 @@ with st.sidebar:
     st.markdown("# 🌿 Навигация")
     
     if st.session_state.client_logged_in:
+        # КЛИЕНТ ВОШЕЛ В СИСТЕМУ
         if st.session_state.client_name:
             st.markdown(f"### 👋 {st.session_state.client_name}!")
         
+        # 🔥 ОБНОВЛЯЕМ МЕНЮ - ДОБАВЛЯЕМ ВКЛАДКУ "УВЕДОМЛЕНИЯ"
         tabs = st.radio(
             "Меню:",
-            ["📅 Запись", "👁️ Текущая запись", "📊 История", "👤 Профиль"],
+            ["👁️ Текущая запись", "👤 Профиль", "💬 Уведомления", "📅 Запись", "📊 История"],  # 🔥 ДОБАВИЛИ
             key="client_tabs"
         )
         st.session_state.current_tab = tabs
         
+        # Показываем статус Telegram
+        telegram_connected = get_client_telegram_chat_id(st.session_state.client_phone)
+        if telegram_connected:
+            st.success("🔔 Уведомления подключены")
+        else:
+            st.warning("🔕 Нет уведомлений")
+        
         st.markdown("---")
+        st.markdown("### 🔐 Безопасность")
+        st.info("👤 Режим клиента")
+        
         if st.button("🚪 Выйти", use_container_width=True):
             client_logout()
             st.rerun()
     
     elif st.session_state.admin_logged_in:
+        # АДМИНИСТРАТОР ВОШЕЛ В СИСТЕМУ
         st.markdown("### 📊 Статистика")
         total, upcoming, this_month, this_week = get_stats()
         st.metric("📋 Всего", total)
@@ -875,42 +1788,44 @@ with st.sidebar:
         st.metric("📅 За месяц", this_month)
         
         st.markdown("---")
+        st.markdown("### 👩‍💼 Администратор")
+        st.success("✅ Привилегированный доступ")
+        
         if st.button("🚪 Выйти", use_container_width=True):
             admin_logout()
             st.rerun()
     
     else:
+        # НИКТО НЕ ВОШЕЛ В СИСТЕМУ
         st.markdown("### 👤 Клиентская зона")
         st.info("Для записи используйте основную страницу")
     
-    # Кнопка входа администратора всегда внизу
+    # РАЗДЕЛ АДМИНИСТРАТОРА
     st.markdown("---")
-    st.markdown("### 👩‍💼 Администратор")
     
-    if st.session_state.admin_logged_in:
-        st.success("✅ Вы вошли как администратор")
-    else:
+    if not st.session_state.client_logged_in and not st.session_state.admin_logged_in:
+        st.markdown("### 👩‍💼 Администратор")
+        
         if st.button("🔐 Вход для администратора", use_container_width=True, type="secondary"):
             st.session_state.show_admin_login = True
             st.rerun()
-    
-    if st.session_state.show_admin_login:
-        st.markdown("---")
-        with st.form("admin_sidebar_login", clear_on_submit=True):
-            password = st.text_input("Пароль администратора", type="password")
-            submit = st.form_submit_button("Войти", use_container_width=True)
-            
-            if submit:
-                if password and check_admin_password(password):
-                    admin_login()
-                    st.success("✅ Добро пожаловать!")
-                    st.rerun()
-                elif password:
-                    st.error("❌ Неверный пароль!")
         
-        if st.button("❌ Отмена", use_container_width=True, type="secondary"):
-            st.session_state.show_admin_login = False
-            st.rerun()
+        if st.session_state.show_admin_login:
+            with st.form("admin_sidebar_login", clear_on_submit=True):
+                password = st.text_input("Пароль администратора", type="password")
+                submit = st.form_submit_button("Войти", use_container_width=True)
+                
+                if submit:
+                    if password and check_admin_password(password):
+                        admin_login()
+                        st.success("✅ Добро пожаловать!")
+                        st.rerun()
+                    elif password:
+                        st.error("❌ Неверный пароль!")
+            
+            if st.button("❌ Отмена", use_container_width=True, type="secondary"):
+                st.session_state.show_admin_login = False
+                st.rerun()
 
 # ============================================================================
 # ПРОВЕРКА ПОДКЛЮЧЕНИЯ К SUPABASE
@@ -939,7 +1854,7 @@ if supabase is None:
 if st.session_state.admin_logged_in:
     st.title("👩‍💼 Панель управления")
     
-    tabs = st.tabs(["📋 Записи", "👥 Клиенты", "⚙️ Настройки", "🚫 Блокировки", "📊 Аналитика"])
+    tabs = st.tabs(["📋 Записи", "👥 Клиенты", "⚙️ Настройки", "🚫 Блокировки", "📊 Аналитика", "🔔 Уведомления"])
     
     # Вкладка Записи
     with tabs[0]:
@@ -1246,23 +2161,109 @@ if st.session_state.admin_logged_in:
     
     # Вкладка Настройки
     with tabs[2]:
-        st.markdown("### ⚙️ Настройки расписания")
+        st.markdown("### ⚙️ Настройки системы")
         
-        settings = get_settings()
-        if settings:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                work_start = st.time_input("🕐 Начало", value=datetime.strptime(settings['work_start'], '%H:%M').time())
-            with col2:
-                work_end = st.time_input("🕐 Конец", value=datetime.strptime(settings['work_end'], '%H:%M').time())
-            with col3:
-                session_duration = st.number_input("⏱️ Длительность (мин)", 
-                                                  min_value=15, max_value=180, value=settings['session_duration'], step=15)
+        settings_tabs = st.tabs(["📅 Расписание", "ℹ️ Информационная панель"])
+        
+        # Вкладка расписания
+        with settings_tabs[0]:
+            st.markdown("#### 📅 Настройки расписания")
             
-            if st.button("💾 Сохранить настройки", use_container_width=True):
-                if update_settings(work_start.strftime('%H:%M'), work_end.strftime('%H:%M'), session_duration):
-                    st.success("✅ Настройки сохранены!")
-                    st.rerun()
+            settings = get_settings()
+            if settings:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    work_start = st.time_input("🕐 Начало рабочего дня", 
+                                             value=datetime.strptime(settings['work_start'], '%H:%M').time())
+                with col2:
+                    work_end = st.time_input("🕐 Конец рабочего дня", 
+                                           value=datetime.strptime(settings['work_end'], '%H:%M').time())
+                with col3:
+                    session_duration = st.number_input("⏱️ Длительность сессии (мин)", 
+                                                      min_value=15, max_value=180, 
+                                                      value=settings['session_duration'], step=15)
+                
+                if st.button("💾 Сохранить настройки расписания", use_container_width=True):
+                    if update_settings(work_start.strftime('%H:%M'), work_end.strftime('%H:%M'), session_duration):
+                        st.success("✅ Настройки расписания сохранены!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Ошибка сохранения настроек расписания")
+        
+        # Вкладка информационной панели
+        with settings_tabs[1]:
+            st.markdown("#### ℹ️ Настройки информационной панели")
+            st.info("Здесь вы можете редактировать текст, который видят клиенты в правой панели")
+            
+            settings = get_settings()
+            if settings:
+                with st.form("info_panel_settings"):
+                    st.markdown("**Основные настройки:**")
+                    info_title = st.text_input("📝 Заголовок панели", 
+                                             value=settings.get('info_title', 'ℹ️ Информация'))
+                    
+                    st.markdown("**📋 Содержимое панели:**")
+                    info_work_hours = st.text_area("🕐 Рабочее время", 
+                                                 value=settings.get('info_work_hours', '🕐 Рабочее время:\n09:00 - 18:00'),
+                                                 height=80,
+                                                 help="Используйте \\n для переноса строк")
+                    
+                    info_session_duration = st.text_area("⏱️ Длительность консультации", 
+                                                       value=settings.get('info_session_duration', '⏱️ Длительность консультации:\n60 минут'),
+                                                       height=80)
+                    
+                    info_format = st.text_area("💻 Формат консультации", 
+                                             value=settings.get('info_format', '💻 Формат:\nОнлайн или в кабинете'),
+                                             height=80)
+                    
+                    info_contacts = st.text_area("📞 Контактная информация", 
+                                               value=settings.get('info_contacts', '📞 Контакты:\n📱 +7 (999) 123-45-67\n📧 hello@psychologist.ru\n🌿 psychologist.ru'),
+                                               height=100,
+                                               help="Укажите телефоны, email, сайт и другие контакты")
+                    
+                    info_additional = st.text_area("📝 Дополнительная информация", 
+                                                 value=settings.get('info_additional', ''),
+                                                 height=100,
+                                                 placeholder="Любая дополнительная информация для клиентов...",
+                                                 help="Необязательное поле")
+                    
+                    col1, col2 = st.columns([1, 1])
+                    with col1:
+                        submit_info = st.form_submit_button("💾 Сохранить настройки", use_container_width=True)
+                    with col2:
+                        preview_info = st.form_submit_button("👁️ Предпросмотр", use_container_width=True)
+                    
+                    if submit_info:
+                        info_data = {
+                            'info_title': info_title,
+                            'info_work_hours': info_work_hours,
+                            'info_session_duration': info_session_duration,
+                            'info_format': info_format,
+                            'info_contacts': info_contacts,
+                            'info_additional': info_additional
+                        }
+                        
+                        if update_info_settings(info_data):
+                            st.success("✅ Настройки информационной панели сохранены!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Ошибка сохранения настроек. Проверьте структуру базы данных.")
+                    
+                    if preview_info:
+                        st.markdown("---")
+                        st.markdown("#### 👁️ Предпросмотр информационной панели")
+                        st.markdown(f"""
+                        <div class="info-box">
+                            <h4>{info_title}</h4>
+                            <p><strong>{info_work_hours.replace(chr(10), '<br>')}</strong></p>
+                            <p><strong>{info_session_duration.replace(chr(10), '<br>')}</strong></p>
+                            <p><strong>{info_format.replace(chr(10), '<br>')}</strong></p>
+                            <hr>
+                            <h4>📞 Контакты</h4>
+                            <p>{info_contacts.replace(chr(10), '<br>')}</p>
+                            {f'<p>{info_additional.replace(chr(10), "<br>")}</p>' if info_additional and info_additional.strip() else ''}
+                        </div>
+                        """, unsafe_allow_html=True)
     
     # Вкладка Блокировки
     with tabs[3]:
@@ -1339,6 +2340,56 @@ if st.session_state.admin_logged_in:
         col2.metric("⏰ Предстоящих", upcoming)
         col3.metric("📅 За месяц", this_month)
         col4.metric("📆 За неделю", this_week)
+    
+    # Вкладка Уведомления
+    with tabs[5]:
+        st.markdown("### 🔔 Система уведомлений")
+        
+        # Статус бота
+        st.markdown("#### 🤖 Статус Telegram бота")
+        
+        if TELEGRAM_CONFIG['bot_token'] and TELEGRAM_CONFIG['admin_chat_id']:
+            st.success("✅ Бот настроен и готов к работе")
+            
+            # Тестирование
+            st.markdown("#### 🧪 Тестирование уведомлений")
+            
+            test_message = st.text_area("Тестовое сообщение", 
+                                      "✅ Система уведомлений работает корректно!")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📤 Тест админу", use_container_width=True):
+                    if telegram_bot.send_to_admin(test_message):
+                        st.success("✅ Тест отправлен админу!")
+                    else:
+                        st.error("❌ Ошибка отправки")
+            
+            with col2:
+                test_chat_id = st.text_input("Chat ID для теста", placeholder="123456789")
+                if st.button("📤 Тест клиенту", use_container_width=True):
+                    if test_chat_id:
+                        if telegram_bot.send_to_client(test_chat_id, test_message):
+                            st.success("✅ Тест отправлен клиенту!")
+                        else:
+                            st.error("❌ Ошибка отправки")
+                    else:
+                        st.error("❌ Введите Chat ID")
+        
+        else:
+            st.error("❌ Бот не настроен")
+            st.markdown("""
+            ### ⚙️ Инструкция по настройке:
+            
+            1. **Создай бота** в Telegram через @BotFather
+            2. **Получи токен** и укажи в переменных:
+               ```env
+               TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+               TELEGRAM_ADMIN_CHAT_ID=123456789
+               ```
+            3. **Узнай свой Chat ID** через @userinfobot
+            4. **Перезапусти приложение**
+            """)
 
 # ============================================================================
 # ГЛАВНАЯ СТРАНИЦА: КЛИЕНТСКАЯ ЧАСТЬ
@@ -1386,9 +2437,13 @@ elif not st.session_state.client_logged_in:
                 with col_a:
                     client_name = st.text_input("👤 Имя *", placeholder="Иван Иванов")
                     client_email = st.text_input("📧 Email", placeholder="example@mail.com")
+                    # 🔥 НОВОЕ ПОЛЕ
+                    client_chat_id = st.text_input("💬 ID Telegram для уведомлений", 
+                                                 placeholder="123456789 (опционально)",
+                                                 help="Чтобы получать уведомления о записи и напоминания")
                 with col_b:
                     client_phone = st.text_input("📱 Телефон *", placeholder="+7 (999) 123-45-67")
-                    client_telegram = st.text_input("💬 Telegram", placeholder="@username")
+                    client_telegram = st.text_input("💬 Telegram username", placeholder="@username")
                 
                 notes = st.text_area("💭 Комментарий (необязательно)", height=80)
                 submit = st.form_submit_button("✅ Подтвердить запись", use_container_width=True)
@@ -1399,8 +2454,11 @@ elif not st.session_state.client_logged_in:
                     elif has_active_booking(client_phone):
                         st.error("❌ У вас уже есть активная запись")
                     else:
-                        success, message = create_booking(client_name, client_phone, client_email, 
-                                                         client_telegram, str(selected_date), selected_time, notes)
+                        success, message = create_booking(
+                            client_name, client_phone, client_email, 
+                            client_telegram, str(selected_date), selected_time, notes,
+                            client_chat_id  # 🔥 ПЕРЕДАЕМ CHAT_ID
+                        )
                         if success:
                             st.balloons()
                             # Автологин
@@ -1415,6 +2473,7 @@ elif not st.session_state.client_logged_in:
                                 <p><strong>📅 Дата:</strong> {selected_date.strftime('%d.%m.%Y')}</p>
                                 <p><strong>🕐 Время:</strong> {selected_time}</p>
                                 <p><strong>🎉 Вы автоматически авторизованы!</strong></p>
+                                <p><strong>🔔 Уведомления отправлены!</strong></p>
                             </div>
                             """, unsafe_allow_html=True)
                             st.rerun()
@@ -1422,24 +2481,10 @@ elif not st.session_state.client_logged_in:
                             st.error(message)
     
     with col2:
-        settings = get_settings()
-        if settings:
-            st.markdown(f"""
-            <div class="info-box">
-                <h4>ℹ️ Информация</h4>
-                <p><strong>⏰ Рабочее время:</strong><br>{settings['work_start']} - {settings['work_end']}</p>
-                <p><strong>⏱️ Длительность:</strong><br>{settings['session_duration']} минут</p>
-                <p><strong>💻 Формат:</strong><br>Онлайн или в кабинете</p>
-                <hr>
-                <h4>📞 Контакты</h4>
-                <p>📱 +7 (999) 123-45-67<br>
-                📧 hello@psychologist.ru<br>
-                🌿 psychologist.ru</p>
-            </div>
-            """, unsafe_allow_html=True)
+        render_info_panel()
 
 # ============================================================================
-# ГЛАВНАЯ СТРАНИЦА: ЛИЧНЫЙ КАБИНЕТ
+# ГЛАВНАЯ СТРАНИЦА: ЛИЧНЫЙ КАБИНЕТ (ОБНОВЛЕННЫЙ)
 # ============================================================================
 
 else:
@@ -1453,6 +2498,7 @@ else:
     </div>
     """, unsafe_allow_html=True)
     
+    # ОБНОВЛЕННЫЙ ПОРЯДОК ВКЛАДОК - ДОБАВЛЯЕМ TELEGRAM
     if st.session_state.current_tab == "👁️ Текущая запись":
         st.markdown("### 👁️ Текущая запись")
         
@@ -1471,9 +2517,23 @@ else:
             </div>
             """, unsafe_allow_html=True)
             
+            # Проверяем подключен ли Telegram
+            telegram_connected = get_client_telegram_chat_id(st.session_state.client_phone)
+            if not telegram_connected:
+                st.warning("""
+                ⚠️ **Вы не получаете напоминания!**
+                
+                Подключите Telegram в разделе "💬 Уведомления" чтобы получать:
+                • ⏰ Напоминание за 1 час до консультации
+                • ✅ Подтверждения новых записей
+                • ❌ Уведомления об отменах
+                """)
+            
             if time_until.total_seconds() > BOOKING_RULES["MIN_CANCEL_MINUTES"] * 60:
                 if st.button("❌ Отменить запись", type="secondary", use_container_width=True):
-                    success, message = cancel_booking(upcoming['id'], st.session_state.client_phone)
+                    # Получаем chat_id для уведомления
+                    chat_id = get_client_telegram_chat_id(st.session_state.client_phone)
+                    success, message = cancel_booking(upcoming['id'], st.session_state.client_phone, chat_id)
                     if success:
                         st.success(message)
                         st.rerun()
@@ -1483,26 +2543,6 @@ else:
                 st.warning(f"⚠️ Отмена возможна за {BOOKING_RULES['MIN_CANCEL_MINUTES']}+ минут")
         else:
             st.info("📭 Нет предстоящих консультаций")
-    
-    elif st.session_state.current_tab == "📊 История":
-        st.markdown("### 📊 История записей")
-        
-        bookings = get_client_bookings(st.session_state.client_phone)
-        
-        if not bookings.empty:
-            for idx, row in bookings.iterrows():
-                status_info = STATUS_DISPLAY.get(row['status'], STATUS_DISPLAY['confirmed'])
-                date_formatted = format_date(row['booking_date'])
-                
-                st.markdown(f"""
-                <div class="booking-card">
-                    <h4>{status_info['emoji']} {date_formatted} в {row['booking_time']}</h4>
-                    <p><strong>Статус:</strong> <span style="color: {status_info['color']}">{status_info['text']}</span></p>
-                    {f"<p><strong>💭</strong> {row['notes']}</p>" if row['notes'] else ""}
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("📭 История пуста")
     
     elif st.session_state.current_tab == "👤 Профиль":
         st.markdown("### 👤 Профиль")
@@ -1523,7 +2563,10 @@ else:
                     # В Supabase профиль обновляется через создание новой записи с обновленными данными
                     st.info("ℹ️ Данные профиля обновятся при следующей записи")
     
-    else:
+    elif st.session_state.current_tab == "💬 Уведомления":  # 🔥 НОВАЯ ВКЛАДКА
+        render_telegram_section()
+    
+    elif st.session_state.current_tab == "📅 Запись":
         st.markdown("### 📅 Новая запись")
         
         if has_active_booking(st.session_state.client_phone):
@@ -1547,12 +2590,16 @@ else:
                         submit = st.form_submit_button("✅ Записаться", use_container_width=True)
                         
                         if submit:
+                            # Получаем chat_id для уведомления
+                            chat_id = get_client_telegram_chat_id(st.session_state.client_phone)
+                            
                             success, message = create_booking(
                                 client_info['name'] if client_info else st.session_state.client_name,
                                 st.session_state.client_phone,
                                 client_info.get('email', '') if client_info else '',
                                 client_info.get('telegram', '') if client_info else '',
-                                str(selected_date), selected_time, notes
+                                str(selected_date), selected_time, notes,
+                                chat_id  # 🔥 ПЕРЕДАЕМ CHAT_ID
                             )
                             if success:
                                 st.balloons()
@@ -1562,12 +2609,24 @@ else:
                                 st.error(message)
             
             with col2:
-                settings = get_settings()
-                if settings:
-                    st.markdown(f"""
-                    <div class="info-box">
-                        <h4>ℹ️ Информация</h4>
-                        <p><strong>⏰ Рабочее время:</strong><br>{settings['work_start']} - {settings['work_end']}</p>
-                        <p><strong>⏱️ Длительность:</strong><br>{settings['session_duration']} минут</p>
-                    </div>
-                    """, unsafe_allow_html=True)
+                render_info_panel()
+    
+    elif st.session_state.current_tab == "📊 История":
+        st.markdown("### 📊 История записей")
+        
+        bookings = get_client_bookings(st.session_state.client_phone)
+        
+        if not bookings.empty:
+            for idx, row in bookings.iterrows():
+                status_info = STATUS_DISPLAY.get(row['status'], STATUS_DISPLAY['confirmed'])
+                date_formatted = format_date(row['booking_date'])
+                
+                st.markdown(f"""
+                <div class="booking-card">
+                    <h4>{status_info['emoji']} {date_formatted} в {row['booking_time']}</h4>
+                    <p><strong>Статус:</strong> <span style="color: {status_info['color']}">{status_info['text']}</span></p>
+                    {f"<p><strong>💭</strong> {row['notes']}</p>" if row['notes'] else ""}
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("📭 История пуста")
