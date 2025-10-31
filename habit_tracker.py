@@ -73,18 +73,20 @@ def init_supabase():
         return None
 
 # ============================================================================
-# УЛУЧШЕННАЯ СТИЛИЗАЦИЯ
+# УЛУЧШЕННАЯ СТИЛИЗАЦИЯ С АНИМАЦИЯМИ И MODERN UI
 # ============================================================================
 
 def load_custom_css():
-    """Загрузка улучшенных CSS стилей"""
+    """Загрузка улучшенных CSS стилей с современными эффектами"""
     st.markdown("""
         <style>
+        /* ===== ОБЩИЕ СТИЛИ ===== */
         .main {
             padding: 0rem 1rem;
             background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
         }
         
+        /* ===== КНОПКИ С УЛУЧШЕННОЙ АНИМАЦИЕЙ ===== */
         .stButton>button {
             width: 100%;
             border-radius: 12px;
@@ -96,6 +98,26 @@ def load_custom_css():
             box-shadow: 0 4px 15px rgba(136, 200, 188, 0.3);
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             font-size: 1rem;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .stButton>button::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+        
+        .stButton>button:hover::before {
+            width: 300px;
+            height: 300px;
         }
         
         .stButton>button:hover {
@@ -104,6 +126,12 @@ def load_custom_css():
             background: linear-gradient(135deg, #6ba292 0%, #88c8bc 100%);
         }
         
+        .stButton>button:active {
+            transform: translateY(0);
+            box-shadow: 0 4px 15px rgba(136, 200, 188, 0.3);
+        }
+        
+        /* ===== КАРТОЧКИ ЗАПИСЕЙ ===== */
         .booking-card {
             padding: 2rem;
             border-radius: 20px;
@@ -116,6 +144,27 @@ def load_custom_css():
             overflow: hidden;
         }
         
+        .booking-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(136, 200, 188, 0.1), transparent);
+            transition: left 0.5s;
+        }
+        
+        .booking-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+        }
+        
+        .booking-card:hover::before {
+            left: 100%;
+        }
+        
+        /* ===== ИНФОРМАЦИОННЫЕ ПАНЕЛИ ===== */
         .info-box {
             background: white;
             border-radius: 20px;
@@ -123,8 +172,25 @@ def load_custom_css():
             box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
             border-left: 5px solid #88c8bc;
             transition: all 0.3s ease;
+            animation: fadeInUp 0.5s ease-out;
         }
         
+        .info-box:hover {
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+        }
+        
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        /* ===== ПРИВЕТСТВЕННЫЙ ХЕДЕР ===== */
         .welcome-header {
             background: linear-gradient(135deg, #88c8bc 0%, #a8d5ba 100%);
             color: white;
@@ -133,8 +199,44 @@ def load_custom_css():
             margin-bottom: 2rem;
             text-align: center;
             box-shadow: 0 10px 40px rgba(136, 200, 188, 0.3);
+            position: relative;
+            overflow: hidden;
         }
         
+        .welcome-header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            animation: rotate 20s linear infinite;
+        }
+        
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        .welcome-header h1 {
+            position: relative;
+            z-index: 1;
+            margin: 0;
+            font-size: 2.5rem;
+            font-weight: 700;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .welcome-header p {
+            position: relative;
+            z-index: 1;
+            margin: 0.5rem 0 0 0;
+            font-size: 1.2rem;
+            opacity: 0.95;
+        }
+        
+        /* ===== СООБЩЕНИЯ О УСПЕХЕ ===== */
         .success-message {
             background: linear-gradient(135deg, #f0f9f7 0%, #e8f5f1 100%);
             border-left: 5px solid #88c8bc;
@@ -142,14 +244,33 @@ def load_custom_css():
             border-radius: 16px;
             margin: 1.5rem 0;
             box-shadow: 0 8px 30px rgba(136, 200, 188, 0.2);
+            animation: slideInRight 0.5s ease-out;
         }
         
+        @keyframes slideInRight {
+            from {
+                opacity: 0;
+                transform: translateX(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        .success-message h3 {
+            color: #88c8bc;
+            margin-top: 0;
+        }
+        
+        /* ===== TELEGRAM СТАТУСЫ ===== */
         .telegram-connected {
             background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
             border-left: 5px solid #0088cc;
             padding: 1.5rem;
             border-radius: 12px;
             margin: 1rem 0;
+            animation: fadeIn 0.5s ease-out;
         }
         
         .telegram-disconnected {
@@ -158,12 +279,139 @@ def load_custom_css():
             padding: 1.5rem;
             border-radius: 12px;
             margin: 1rem 0;
+            animation: fadeIn 0.5s ease-out;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        /* ===== ВРЕМЕННЫЕ СЛОТЫ ===== */
+        .time-slot-button {
+            transition: all 0.2s ease;
+        }
+        
+        .time-slot-button:hover {
+            transform: scale(1.05);
+        }
+        
+        /* ===== МЕТРИКИ ===== */
+        [data-testid="stMetricValue"] {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #88c8bc;
+        }
+        
+        /* ===== ФОРМЫ ===== */
+        .stTextInput>div>div>input,
+        .stTextArea>div>div>textarea,
+        .stSelectbox>div>div>select {
+            border-radius: 10px;
+            border: 2px solid #e0e0e0;
+            transition: all 0.3s ease;
+        }
+        
+        .stTextInput>div>div>input:focus,
+        .stTextArea>div>div>textarea:focus,
+        .stSelectbox>div>div>select:focus {
+            border-color: #88c8bc;
+            box-shadow: 0 0 0 3px rgba(136, 200, 188, 0.1);
+        }
+        
+        /* ===== ЭКСПАНДЕРЫ ===== */
+        .streamlit-expanderHeader {
+            background: white;
+            border-radius: 10px;
+            border: 1px solid #e0e0e0;
+            transition: all 0.3s ease;
+        }
+        
+        .streamlit-expanderHeader:hover {
+            background: #f8f9fa;
+            border-color: #88c8bc;
+        }
+        
+        /* ===== ТАБЫ ===== */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 8px;
+        }
+        
+        .stTabs [data-baseweb="tab"] {
+            border-radius: 10px;
+            padding: 12px 24px;
+            background: white;
+            border: 2px solid #e0e0e0;
+            transition: all 0.3s ease;
+        }
+        
+        .stTabs [data-baseweb="tab"]:hover {
+            background: #f8f9fa;
+            border-color: #88c8bc;
+        }
+        
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(135deg, #88c8bc 0%, #6ba292 100%);
+            color: white !important;
+            border-color: #88c8bc;
+        }
+        
+        /* ===== ПРОГРЕСС БАР ===== */
+        .stProgress > div > div > div > div {
+            background: linear-gradient(90deg, #88c8bc 0%, #6ba292 100%);
+        }
+        
+        /* ===== АЛЕРТЫ ===== */
+        .stAlert {
+            border-radius: 12px;
+            animation: slideInLeft 0.3s ease-out;
+        }
+        
+        @keyframes slideInLeft {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        /* ===== САЙДБАР ===== */
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #f8f9fa 0%, #ffffff 100%);
+        }
+        
+        /* ===== СКРОЛЛБАР ===== */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: linear-gradient(135deg, #88c8bc 0%, #6ba292 100%);
+            border-radius: 10px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(135deg, #6ba292 0%, #88c8bc 100%);
+        }
+        
+        /* ===== LOADING SPINNER ===== */
+        .stSpinner > div {
+            border-top-color: #88c8bc !important;
         }
         </style>
     """, unsafe_allow_html=True)
 
 # ============================================================================
-# УТИЛИТЫ И ХЕЛПЕРЫ
+# УТИЛИТЫ И ХЕЛПЕРЫ (УЛУЧШЕННЫЕ)
 # ============================================================================
 
 def hash_password(password: str) -> str:
@@ -184,7 +432,7 @@ def format_phone(phone: str) -> str:
     return phone
 
 def validate_phone(phone: str) -> tuple:
-    """Валидация телефона"""
+    """Валидация телефона с детальной проверкой"""
     clean = normalize_phone(phone)
     if len(clean) < 10:
         return False, "❌ Номер слишком короткий"
@@ -192,17 +440,21 @@ def validate_phone(phone: str) -> tuple:
         return False, "❌ Номер слишком длинный"
     if not clean.isdigit():
         return False, "❌ Только цифры"
+    if len(clean) == 11 and not clean.startswith('7'):
+        return False, "❌ Неверный формат (должен начинаться с 7)"
     return True, "✅ Корректный номер"
 
-def validate_email(email: str) -> bool:
-    """Валидация email"""
+def validate_email(email: str) -> tuple:
+    """Валидация email с детальной проверкой"""
     if not email:
-        return True
+        return True, "ℹ️ Email не обязателен"
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return bool(re.match(pattern, email))
+    if re.match(pattern, email):
+        return True, "✅ Email корректен"
+    return False, "❌ Неверный формат email"
 
 def format_date(date_str: str, format_str: str = '%d.%m.%Y') -> str:
-    """Форматирование даты"""
+    """Форматирование даты с обработкой ошибок"""
     try:
         return datetime.strptime(date_str, '%Y-%m-%d').strftime(format_str)
     except:
@@ -243,6 +495,32 @@ def get_month_end(year: int, month: int) -> str:
         next_month = datetime(year, month + 1, 1)
     month_end = next_month - timedelta(days=1)
     return month_end.strftime('%Y-%m-%d')
+
+def get_weekday_name(date_str: str) -> str:
+    """Получение названия дня недели"""
+    try:
+        date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+        weekday_names = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье']
+        return weekday_names[date_obj.weekday()]
+    except:
+        return ""
+
+def format_datetime_relative(date_str: str, time_str: str) -> str:
+    """Форматирование даты/времени относительно текущего момента"""
+    try:
+        event_datetime = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        now = datetime.now()
+        
+        if event_datetime.date() == now.date():
+            return f"Сегодня в {time_str}"
+        elif event_datetime.date() == (now + timedelta(days=1)).date():
+            return f"Завтра в {time_str}"
+        elif event_datetime.date() == (now - timedelta(days=1)).date():
+            return f"Вчера в {time_str}"
+        else:
+            return f"{format_date(date_str)} в {time_str}"
+    except:
+        return f"{date_str} {time_str}"
 
 # ============================================================================
 # TELEGRAM БОТ ДЛЯ УВЕДОМЛЕНИЙ
@@ -1759,7 +2037,7 @@ with st.sidebar:
         # 🔥 ОБНОВЛЯЕМ МЕНЮ - ДОБАВЛЯЕМ ВКЛАДКУ "УВЕДОМЛЕНИЯ"
         tabs = st.radio(
             "Меню:",
-            ["👁️ Текущая запись", "👤 Профиль", "💬 Уведомления", "📅 Запись", "📊 История"],  # 🔥 ДОБАВИЛИ
+            ["👁️ Текущая запись", "👤 Профиль", "💬 Уведомления", "📅 Новая запись", "📊 История записей"],  # 🔥 ДОБАВИЛИ
             key="client_tabs"
         )
         st.session_state.current_tab = tabs
@@ -1789,7 +2067,7 @@ with st.sidebar:
         
         st.markdown("---")
         st.markdown("### 👩‍💼 Администратор")
-        st.success("✅ Привилегированный доступ")
+        st.success("✅ Вы зашли как администратор")
         
         if st.button("🚪 Выйти", use_container_width=True):
             admin_logout()
@@ -1797,8 +2075,8 @@ with st.sidebar:
     
     else:
         # НИКТО НЕ ВОШЕЛ В СИСТЕМУ
-        st.markdown("### 👤 Клиентская зона")
-        st.info("Для записи используйте основную страницу")
+        st.markdown("### 👤 Для пользователя")
+        st.info("Для записи выберите время и заполните форму или войдите в личный кабинет")
     
     # РАЗДЕЛ АДМИНИСТРАТОРА
     st.markdown("---")
